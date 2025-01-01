@@ -1,4 +1,5 @@
-﻿using Microsoft.Extensions.Options;
+﻿using DotNet.ParentalControl.Models;
+using Microsoft.Extensions.Options;
 using System.Diagnostics;
 using Wisk.ParentalControl;
 
@@ -40,11 +41,16 @@ namespace ParentalControlPoc.Services
 
             if (processActivity.SpentToday > limit.Value)
             {
-                foreach (var process in Process.GetProcessesByName(Path.GetFileNameWithoutExtension(processActivity.ProcessName)))
+                var processMatcher = _options.AppLimits[processActivity.ProcessName].Matcher;
+                var processes = processMatcher == null
+                    ? Process.GetProcessesByName(Path.GetFileNameWithoutExtension(processActivity.ProcessName))
+                    : Process.GetProcesses().Where(p => processMatcher(p.ProcessName)).ToArray();
+
+                foreach (var process in processes)
                 {
                     process.Kill();
                     _logger.LogInformation($"Stopped {processActivity.ProcessName} (Process ID: {process.Id})");
-                    MessageBox.Show($"Time limit {limit.Value} exceeded for {processActivity.ProcessName}");
+                    MessageBox.Show($"Time limit {limit.Value:hh\\:mm\\:ss} exceeded for {processActivity.ProcessName}");
                 }
                 return;
             }
@@ -53,11 +59,11 @@ namespace ParentalControlPoc.Services
             var previousActivity = _current!.GetValueOrDefault(processActivity.ProcessName);
             var previousActivityTimeLeft = limit.Value - previousActivity?.SpentToday ?? processActivity.SpentToday;
 
-            foreach (var notificationsInterval in _options.NotificationIntervals.OrderByDescending(i => i))
+            foreach (var notificationsInterval in _options.NotificationIntervals.OrderBy(i => i))
             {
-                if (timeLeft < notificationsInterval && (previousActivity == null || previousActivity == processActivity || timeLeft > previousActivityTimeLeft))
+                if (timeLeft < notificationsInterval && (previousActivity == null || previousActivity == processActivity || previousActivityTimeLeft > notificationsInterval))
                 {
-                    MessageBox.Show($"Left {timeLeft} for {processActivity.ProcessName}");
+                    MessageBox.Show($"Left {timeLeft:hh\\:mm\\:ss} for {processActivity.ProcessName}");
                     break;
                 }
             }

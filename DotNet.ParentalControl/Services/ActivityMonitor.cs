@@ -1,4 +1,5 @@
-﻿using Microsoft.Extensions.Options;
+﻿using DotNet.ParentalControl.Models;
+using Microsoft.Extensions.Options;
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Management;
@@ -8,30 +9,10 @@ using System.Text.Encodings.Web;
 using System.Text.Json;
 using Wisk.ParentalControl;
 using Wisk.ParentalControl.Models;
+using static System.Windows.Forms.Design.AxImporter;
 
 namespace ParentalControlPoc.Services
 {
-    public class ProcessActivityNotification : IEquatable<ProcessActivityNotification>
-    {
-        public required string ProcessName { get; set; }
-        public required bool IsActive { get; set; }
-        public required TimeSpan SpentToday { get; set; }
-
-        public override bool Equals(object? obj)
-        {
-            return base.Equals(obj) || obj is ProcessActivityNotification processActivityNotification && Equals(processActivityNotification);
-        }
-
-        public override int GetHashCode()
-        {
-            return ProcessName.GetHashCode() ^ IsActive.GetHashCode() ^ SpentToday.GetHashCode();
-        }
-
-        public bool Equals(ProcessActivityNotification? other)
-        {
-            return other != null && ProcessName == other.ProcessName && IsActive == other.IsActive && SpentToday == other.SpentToday;
-        }
-    }
     public class ActivityMonitor : IDisposable
     {
         private ConcurrentDictionary<string, ProcessData>? _processes;
@@ -70,6 +51,7 @@ namespace ParentalControlPoc.Services
 
         public void Start()
         {
+            _options.Initialize();
             _processes = LoadState();
 
             // Monitor process start events
@@ -91,7 +73,13 @@ namespace ParentalControlPoc.Services
             _logger.LogInformation("Monitoring Notepad++ process. Press Enter to exit.");
         }
 
-        private string GetFilter() => $" WHERE {string.Join(" AND ", _options.AppLimits.Keys.Select(k => $"ProcessName = '{k}'"))}";
+        private string GetFilter() => $" WHERE {string.Join(" OR ", _options.AppLimits.Keys.Select(k =>
+        {
+            if (k.Contains("*"))
+                return $"ProcessName like '{k.Replace("*", "%")}'";
+
+            return $"ProcessName = '{k}'";
+        }))}";
 
         public void Stop()
         {
@@ -133,9 +121,9 @@ namespace ParentalControlPoc.Services
 
             Process[] processList = Process.GetProcesses();
             var runningProcesses = processList
-                .Select(p => new KeyValuePair<string, Process>(p.ProcessName + ".exe", p))
-                .Where(kvp => _options.AppLimits.ContainsKey(kvp.Key))
-                .GroupBy(p => p.Key, kvp => kvp.Value)
+                .Select(p => new KeyValuePair<string?, Process>(_options.FindProcessName($"{p.ProcessName}.exe"), p))
+                .Where(kvp => kvp.Key != null)
+                .GroupBy(p => p.Key!, kvp => kvp.Value)
                 .ToDictionary(g => g.Key, p => p.ToDictionary(p => p.Id, p => p.StartTime));
 
             foreach (var process in _options.AppLimits.Keys)
@@ -177,9 +165,13 @@ namespace ParentalControlPoc.Services
 
         private void ProcessStarted(object sender, EventArrivedEventArgs e)
         {
-            var processName = (string)e.NewEvent.Properties["ProcessName"].Value;
-            if (!_options.AppLimits.ContainsKey(processName))
+            var eventProcessName = (string)e.NewEvent.Properties["ProcessName"].Value;
+            var processName = _options.FindProcessName(eventProcessName);
+            if (processName == null)
+            {
+                _logger.LogError($"Could not find process {eventProcessName}");
                 return;
+            }
 
             var processes = Processes.GetOrAdd(processName, _ => new());
 
@@ -201,9 +193,13 @@ namespace ParentalControlPoc.Services
 
         private void ProcessStopped(object sender, EventArrivedEventArgs e)
         {
-            var processName = (string)e.NewEvent.Properties["ProcessName"].Value;
-            if (!_options.AppLimits.ContainsKey(processName))
+            var eventProcessName = (string)e.NewEvent.Properties["ProcessName"].Value;
+            var processName = _options.FindProcessName(eventProcessName);
+            if(processName == null)
+            {
+                _logger.LogError($"Could not find process {eventProcessName}");
                 return;
+            }
 
             int processId = Convert.ToInt32(e.NewEvent.Properties["ProcessID"].Value);
             var processes = Processes.GetOrAdd(processName, _ => new());
@@ -212,7 +208,7 @@ namespace ParentalControlPoc.Services
             {
                 DateTime stopTime = DateTime.Now;
                 TimeSpan runTime = stopTime - startTime;
-                _logger.LogInformation($"Notepad++ stopped at {stopTime} (Process ID: {processId}). Run time: {runTime}");
+                _logger.LogInformation($"Notepad++ stopped at {stopTime} (Process ID: {processId}). Run time: {runTime:hh\\:mm\\:ss}");
                 processes.StartedProcesses.TryRemove(processId, out _);
 
                 if (!processes.Sessions.TryGetValue(DateTime.Today, out var todaySessions))
@@ -232,17 +228,21 @@ namespace ParentalControlPoc.Services
 
         private void SendCurrentState(long interval)
         {
+            var notifications = new List<ProcessActivityNotification>();
             foreach (var (processName, processData) in Processes)
             {
                 processData.LastUpdated = DateTime.Now;
                 if (!processData.StartedProcesses.IsEmpty)
-                    _notifyAboutSpentTime.OnNext([new ProcessActivityNotification
+                    notifications.Add(new ProcessActivityNotification
                     {
                         ProcessName = processName,
                         IsActive = true,
                         SpentToday = processData.SpentToday
-                    }]);
+                    });
             }
+
+            if (notifications.Count > 0)
+                _notifyAboutSpentTime.OnNext(notifications);
         }
     }
 }
