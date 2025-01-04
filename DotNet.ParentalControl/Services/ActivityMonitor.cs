@@ -1,4 +1,5 @@
-﻿using DotNet.ParentalControl.Models;
+﻿using DotNet.ParentalControl.Configuration;
+using DotNet.ParentalControl.Models;
 using Microsoft.Extensions.Options;
 using System.Collections.Concurrent;
 using System.Diagnostics;
@@ -15,7 +16,7 @@ namespace DotNet.ParentalControl.Services
         private ConcurrentDictionary<string, ProcessData>? _processes;
         private ConcurrentDictionary<string, ProcessData> Processes => _processes ?? throw new ArgumentNullException(nameof(_processes), "Not initialized");
 
-        private readonly MonitorConfiguration _options;
+        private readonly MonitorConfiguration _configuration;
         private readonly object _saveStateLock = new object();
         private readonly JsonSerializerOptions _writeSerializerOptions;
         private readonly ILogger _logger;
@@ -32,16 +33,16 @@ namespace DotNet.ParentalControl.Services
 
         public IObservable<List<ProcessActivityNotification>> SpentTime;
 
-        public ActivityMonitor(IOptions<MonitorConfiguration> options, JsonSerializerOptions writeSerializerOptions, ILogger<ActivityMonitor> logger)
+        public ActivityMonitor(MonitorConfiguration monitorConfiguration, JsonSerializerOptions writeSerializerOptions, ILogger<ActivityMonitor> logger)
         {
-            _options = options.Value;
+            _configuration = monitorConfiguration;
             _writeSerializerOptions = writeSerializerOptions;
             _logger = logger;
             _notifyAboutSpentTime = new ReplaySubject<List<ProcessActivityNotification>>(1);
             SpentTime = _notifyAboutSpentTime.DistinctUntilChanged();
 
-            _refreshTimer = Observable.Interval(_options.ActivityCheckPeriod);
-            _saveStateTimer = Observable.Interval(_options.StateSavePeriod).StartWith(0);
+            _refreshTimer = Observable.Interval(_configuration.ActivityCheckPeriod);
+            _saveStateTimer = Observable.Interval(_configuration.StateSavePeriod).StartWith(0);
         }
 
         public void Dispose()
@@ -51,7 +52,6 @@ namespace DotNet.ParentalControl.Services
 
         public void Start()
         {
-            _options.Initialize();
             _processes = LoadState();
 
             // Monitor process start events
@@ -70,15 +70,15 @@ namespace DotNet.ParentalControl.Services
             SendCurrentState(0);
             _saveState = _saveStateTimer.Subscribe(_ => SaveState());
 
-            _logger.LogInformation($"Monitoring {string.Join(", ", _options.AppLimits.Keys)} processes.");
+            _logger.LogInformation($"Monitoring {string.Join(", ", _configuration.Processes.Values.Select(pl => pl.AppName).Distinct())} processes.");
         }
 
         private string GetFilter()
         {
-            if (_options.LogAllProcesses)
+            if (_configuration.LogAllProcesses)
                 return "";
 
-            return $" WHERE {string.Join(" OR ", _options.AppLimits.Keys.Select(k =>
+            return $" WHERE {string.Join(" OR ", _configuration.Processes.Keys.Select(k =>
             {
                 if (k.Contains("*"))
                     return $"ProcessName like '{k.Replace("*", "%")}'";
@@ -103,7 +103,7 @@ namespace DotNet.ParentalControl.Services
 
         private ConcurrentDictionary<string, ProcessData> LoadState()
         {
-            var fileName = _options.StateFile;
+            var fileName = _configuration.StateFile;
             ConcurrentDictionary<string, ProcessData> loggedProcesses;
             if (!File.Exists(fileName))
                 loggedProcesses = new();
@@ -114,12 +114,12 @@ namespace DotNet.ParentalControl.Services
                     ?? new();
             }
 
-            if (loggedProcesses.Keys.Any(processName => !_options.AppLimits.ContainsKey(processName)))
-                foreach (var process in loggedProcesses.Keys.Where(processName => !_options.AppLimits.ContainsKey(processName)).ToList())
+            if (loggedProcesses.Keys.Any(processName => !_configuration.Processes.ContainsKey(processName)))
+                foreach (var process in loggedProcesses.Keys.Where(processName => !_configuration.Processes.ContainsKey(processName)).ToList())
                     loggedProcesses.TryRemove(process, out _);
 
             Process[] processList = Process.GetProcesses();
-            if (_options.LogAllProcesses)
+            if (_configuration.LogAllProcesses)
                 _logger.LogInformation("Running processes: {Processes}",
                     JsonSerializer.Serialize(processList
                     .Where(p =>
@@ -138,12 +138,12 @@ namespace DotNet.ParentalControl.Services
                 );
 
             var runningProcesses = processList
-                .Select(p => new KeyValuePair<string?, Process>(_options.FindProcessName($"{p.ProcessName}.exe"), p))
+                .Select(p => new KeyValuePair<string?, Process>(_configuration.FindProcessName($"{p.ProcessName}.exe"), p))
                 .Where(kvp => kvp.Key != null)
                 .GroupBy(p => p.Key!, kvp => kvp.Value)
                 .ToDictionary(g => g.Key, p => p.ToDictionary(p => p.Id, p => p.StartTime));
 
-            foreach (var process in _options.AppLimits.Keys)
+            foreach (var process in _configuration.Processes.Keys)
             {
                 var pd = loggedProcesses.GetOrAdd(process, _ => new ProcessData());
                 var runningProcess = runningProcesses.GetValueOrDefault(process);
@@ -173,10 +173,10 @@ namespace DotNet.ParentalControl.Services
                     foreach (var process in Processes.Values)
                         process.LastUpdated = DateTime.Now;
 
-                    if (!Directory.Exists(Path.GetDirectoryName(_options.StateFile)))
-                        Directory.CreateDirectory(Path.GetDirectoryName(_options.StateFile)!);
+                    if (!Directory.Exists(Path.GetDirectoryName(_configuration.StateFile)))
+                        Directory.CreateDirectory(Path.GetDirectoryName(_configuration.StateFile)!);
 
-                    using var file = File.Create(_options.StateFile);
+                    using var file = File.Create(_configuration.StateFile);
                     JsonSerializer.Serialize(file, Processes, new JsonSerializerOptions
                     {
                         WriteIndented = true,
@@ -193,14 +193,14 @@ namespace DotNet.ParentalControl.Services
         private void ProcessStarted(object sender, EventArrivedEventArgs e)
         {
             var eventProcessName = (string)e.NewEvent.Properties["ProcessName"].Value;
-            if (_options.LogAllProcesses)
+            if (_configuration.LogAllProcesses)
                 _logger.LogInformation(
                     "Process Started: {Process}",
                     JsonSerializer.Serialize(e.NewEvent.Properties.Cast<PropertyData>().ToDictionary(pd => pd.Name, pd => pd.Value),
                     _writeSerializerOptions
                 ));
 
-            var processName = _options.FindProcessName(eventProcessName);
+            var processName = _configuration.FindProcessName(eventProcessName);
             if (processName == null)
             {
                 _logger.LogError($"Could not find process {eventProcessName}");
@@ -228,14 +228,14 @@ namespace DotNet.ParentalControl.Services
         private void ProcessStopped(object sender, EventArrivedEventArgs e)
         {
             var eventProcessName = (string)e.NewEvent.Properties["ProcessName"].Value;
-            if (_options.LogAllProcesses)
+            if (_configuration.LogAllProcesses)
                 _logger.LogInformation(
                     "Process Stopped: {Process}",
                     JsonSerializer.Serialize(e.NewEvent.Properties.Cast<PropertyData>().ToDictionary(pd => pd.Name, pd => pd.Value),
                     _writeSerializerOptions
                 ));
 
-            var processName = _options.FindProcessName(eventProcessName);
+            var processName = _configuration.FindProcessName(eventProcessName);
             if (processName == null)
             {
                 _logger.LogError($"Could not find process {eventProcessName}");

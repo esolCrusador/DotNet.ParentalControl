@@ -1,3 +1,4 @@
+using DotNet.ParentalControl.Configuration;
 using DotNet.ParentalControl.Services;
 using Microsoft.Extensions.Logging.EventLog;
 using Serilog;
@@ -24,7 +25,7 @@ namespace DotNet.ParentalControl
                     lb.AddSerilog(new LoggerConfiguration().ReadFrom.Configuration(ctx.Configuration).CreateLogger(), true);
                 });
                 services.AddHostedService<Worker>();
-                services.Configure<MonitorConfiguration>(option =>
+                services.Configure<MonitorOptions>(option =>
                 {
                     ctx.Configuration.GetSection("Monitor").Bind(option, b => b.ErrorOnUnknownConfiguration = true);
                 });
@@ -35,6 +36,7 @@ namespace DotNet.ParentalControl
                 });
                 services.AddSingleton<ActivityMonitor>();
                 services.AddSingleton<ActivityLimiter>();
+                services.AddSingleton<MonitorConfiguration>();
             });
 
             var host = builder.Build();
