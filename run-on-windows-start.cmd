@@ -1,0 +1,1 @@
+schtasks /create /sc ONLOGON /tn DotNet.ParentalControl /tr '"C:\Program Files\DotNet.ParentalControl\DotNet.ParentalControl.exe"' /rl HIGHEST
