@@ -1,21 +1,56 @@
-﻿using System.Collections.Concurrent;
+﻿using DotNet.ParentalControl.Extensions;
+using System.Collections.Concurrent;
 using System.Reactive.Linq;
 
 namespace DotNet.ParentalControl.Models
 {
-    class ProcessData
+    public class ProcessData
     {
         public Dictionary<DateTime, DaySessions> Sessions { get; set; } = [];
         public ConcurrentDictionary<int, DateTime> StartedProcesses { get; set; } = [];
         public DateTime LastUpdated { get; set; } = DateTime.Now;
+        public TimeSpan SpentForPeriod(DateTime from, DateTime? to = default)
+        {
+            TimeSpan spent = TimeSpan.Zero;
+
+            to = DateTimeExtensions.Min(LastUpdated, to);
+            var longestRunning = GetLongestRunningProcess();
+            if (longestRunning != null)
+                spent = to.Value - DateTimeExtensions.Max(longestRunning.Value, from);
+
+            var minDay = from.Date;
+            spent += SpentForPeriod(minDay, from, to.Value);
+
+            var maxDay = to.Value.Date;
+            var diff = (maxDay - minDay).TotalDays;
+
+            for (int i = 1; i <= diff; i++)
+                spent += SpentForPeriod(minDay.AddDays(i), from, to.Value);
+
+            return spent;
+        }
+        private TimeSpan SpentForPeriod(DateTime day, DateTime from, DateTime to)
+        {
+            var sessions = Sessions.GetValueOrDefault(day);
+            if (sessions == null)
+                return TimeSpan.Zero;
+
+            return sessions.Sessions.Where(range => range.Start.IsBetween(from, to) || range.End.IsBetween(from, to))
+                .Aggregate(TimeSpan.Zero, (agg, range) =>
+                {
+                    return agg + (DateTimeExtensions.Min(to, range.End) - DateTimeExtensions.Max(from, range.Start));
+                });
+        }
         public TimeSpan SpentToday
         {
             get
             {
-                var sessions = Sessions.GetValueOrDefault(DateTime.Today)?.TotalSpent ?? TimeSpan.Zero;
-                var longestProcess = StartedProcesses.Values.Select(p => LastUpdated - p).DefaultIfEmpty(TimeSpan.Zero).Max();
+                var spent = Sessions.GetValueOrDefault(DateTime.Today)?.TotalSpent ?? TimeSpan.Zero;
+                var longestRunning = GetLongestRunningProcess();
+                if (longestRunning != null)
+                    spent += LastUpdated - DateTimeExtensions.Max(longestRunning, DateTime.Today);
 
-                return sessions + longestProcess;
+                return spent;
             }
         }
 
@@ -32,5 +67,9 @@ namespace DotNet.ParentalControl.Models
             StartedProcesses = new ConcurrentDictionary<int, DateTime>(processData.StartedProcesses);
             LastUpdated = processData.LastUpdated;
         }
+
+        private DateTime? GetLongestRunningProcess() => StartedProcesses.Values
+            .Select(p => (DateTime?)p)
+            .DefaultIfEmpty(null).Min();
     }
 }

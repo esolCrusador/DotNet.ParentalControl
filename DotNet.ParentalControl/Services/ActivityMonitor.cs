@@ -207,21 +207,21 @@ namespace DotNet.ParentalControl.Services
                 return;
             }
 
-            var processes = Processes.GetOrAdd(processName, _ => new());
+            var process = Processes.GetOrAdd(processName, _ => new());
 
             int processId = Convert.ToInt32(e.NewEvent.Properties["ProcessID"].Value);
             var created = DateTime.FromFileTime(Convert.ToInt64(e.NewEvent.Properties["Time_Created"].Value));
 
-            processes.StartedProcesses.TryAdd(processId, created);
-            processes.LastUpdated = DateTime.Now;
+            process.StartedProcesses.TryAdd(processId, created);
+            process.LastUpdated = DateTime.Now;
 
-            _logger.LogInformation($"Notepad++ started at {processes.StartedProcesses.GetValueOrDefault(processId)} (Process ID: {processId})");
+            _logger.LogInformation($"Notepad++ started at {process.StartedProcesses.GetValueOrDefault(processId)} (Process ID: {processId})");
 
             _notifyAboutSpentTime.OnNext([new ProcessActivityNotification
             {
                 ProcessName = processName,
                 IsActive = true,
-                SpentToday = processes.SpentToday
+                ProcessData = process
             }]);
         }
 
@@ -243,26 +243,26 @@ namespace DotNet.ParentalControl.Services
             }
 
             int processId = Convert.ToInt32(e.NewEvent.Properties["ProcessID"].Value);
-            var processes = Processes.GetOrAdd(processName, _ => new());
+            var process = Processes.GetOrAdd(processName, _ => new());
 
-            if (processes.StartedProcesses.TryGetValue(processId, out var startTime))
+            if (process.StartedProcesses.TryGetValue(processId, out var startTime))
             {
                 DateTime stopTime = DateTime.Now;
                 TimeSpan runTime = stopTime - startTime;
                 _logger.LogInformation($"Notepad++ stopped at {stopTime} (Process ID: {processId}). Run time: {runTime:hh\\:mm\\:ss}");
-                processes.StartedProcesses.TryRemove(processId, out _);
+                process.StartedProcesses.TryRemove(processId, out _);
 
-                if (!processes.Sessions.TryGetValue(DateTime.Today, out var todaySessions))
-                    processes.Sessions.Add(DateTime.Today, todaySessions = new());
+                if (!process.Sessions.TryGetValue(DateTime.Today, out var todaySessions))
+                    process.Sessions.Add(DateTime.Today, todaySessions = new());
 
                 todaySessions.Sessions.Add(new DateRange { Start = startTime, End = stopTime });
-                processes.LastUpdated = DateTime.Now;
+                process.LastUpdated = DateTime.Now;
 
                 _notifyAboutSpentTime.OnNext([new ProcessActivityNotification
                 {
                     ProcessName = processName,
-                    IsActive = !processes.StartedProcesses.IsEmpty,
-                    SpentToday = processes.SpentToday
+                    IsActive = !process.StartedProcesses.IsEmpty,
+                    ProcessData = process
                 }]);
             }
         }
@@ -278,7 +278,7 @@ namespace DotNet.ParentalControl.Services
                     {
                         ProcessName = processName,
                         IsActive = true,
-                        SpentToday = processData.SpentToday
+                        ProcessData = processData
                     });
             }
 
