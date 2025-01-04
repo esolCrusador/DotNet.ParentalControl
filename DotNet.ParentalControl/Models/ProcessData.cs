@@ -1,7 +1,7 @@
 ﻿using System.Collections.Concurrent;
 using System.Reactive.Linq;
 
-namespace Wisk.ParentalControl.Models
+namespace DotNet.ParentalControl.Models
 {
     class ProcessData
     {

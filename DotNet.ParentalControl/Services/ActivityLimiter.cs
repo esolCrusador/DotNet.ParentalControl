@@ -1,9 +1,8 @@
 ﻿using DotNet.ParentalControl.Models;
 using Microsoft.Extensions.Options;
 using System.Diagnostics;
-using Wisk.ParentalControl;
 
-namespace ParentalControlPoc.Services
+namespace DotNet.ParentalControl.Services
 {
     public class ActivityLimiter
     {

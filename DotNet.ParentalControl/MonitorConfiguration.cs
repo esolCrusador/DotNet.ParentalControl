@@ -1,7 +1,7 @@
 ﻿using System.Collections.Concurrent;
 using System.Text.RegularExpressions;
 
-namespace Wisk.ParentalControl
+namespace DotNet.ParentalControl
 {
     public class MonitorConfiguration
     {
@@ -9,6 +9,7 @@ namespace Wisk.ParentalControl
         private string _stateFile = "State.json";
         private ConcurrentDictionary<string, string> _stateFileFullPath = [];
 
+        public bool LogAllProcesses { get; set; }
         public string StateFile
         {
             get

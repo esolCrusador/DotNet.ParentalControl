@@ -1,4 +1,4 @@
-﻿namespace Wisk.ParentalControl.Models
+﻿namespace DotNet.ParentalControl.Models
 {
     class DateRange
     {

@@ -1,6 +1,6 @@
-using ParentalControlPoc.Services;
+using DotNet.ParentalControl.Services;
 
-namespace Wisk.ParentalControl
+namespace DotNet.ParentalControl
 {
     public class Worker : IHostedService
     {

@@ -1,0 +1,1 @@
+DotNet.ParentalControl.exe --Monitor:LogAllProcesses true --ShutDownAfter 00:01:00

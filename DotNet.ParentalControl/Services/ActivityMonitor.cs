@@ -7,11 +7,8 @@ using System.Reactive.Linq;
 using System.Reactive.Subjects;
 using System.Text.Encodings.Web;
 using System.Text.Json;
-using Wisk.ParentalControl;
-using Wisk.ParentalControl.Models;
-using static System.Windows.Forms.Design.AxImporter;
 
-namespace ParentalControlPoc.Services
+namespace DotNet.ParentalControl.Services
 {
     public class ActivityMonitor : IDisposable
     {
@@ -19,6 +16,8 @@ namespace ParentalControlPoc.Services
         private ConcurrentDictionary<string, ProcessData> Processes => _processes ?? throw new ArgumentNullException(nameof(_processes), "Not initialized");
 
         private readonly MonitorConfiguration _options;
+        private readonly object _saveStateLock = new object();
+        private readonly JsonSerializerOptions _writeSerializerOptions;
         private readonly ILogger _logger;
         private readonly IObservable<long> _refreshTimer;
         private readonly IObservable<long> _saveStateTimer;
@@ -33,9 +32,10 @@ namespace ParentalControlPoc.Services
 
         public IObservable<List<ProcessActivityNotification>> SpentTime;
 
-        public ActivityMonitor(IOptions<MonitorConfiguration> options, ILogger<ActivityMonitor> logger)
+        public ActivityMonitor(IOptions<MonitorConfiguration> options, JsonSerializerOptions writeSerializerOptions, ILogger<ActivityMonitor> logger)
         {
             _options = options.Value;
+            _writeSerializerOptions = writeSerializerOptions;
             _logger = logger;
             _notifyAboutSpentTime = new ReplaySubject<List<ProcessActivityNotification>>(1);
             SpentTime = _notifyAboutSpentTime.DistinctUntilChanged();
@@ -70,16 +70,22 @@ namespace ParentalControlPoc.Services
             SendCurrentState(0);
             _saveState = _saveStateTimer.Subscribe(_ => SaveState());
 
-            _logger.LogInformation("Monitoring Notepad++ process. Press Enter to exit.");
+            _logger.LogInformation($"Monitoring {string.Join(", ", _options.AppLimits.Keys)} processes.");
         }
 
-        private string GetFilter() => $" WHERE {string.Join(" OR ", _options.AppLimits.Keys.Select(k =>
+        private string GetFilter()
         {
-            if (k.Contains("*"))
-                return $"ProcessName like '{k.Replace("*", "%")}'";
+            if (_options.LogAllProcesses)
+                return "";
 
-            return $"ProcessName = '{k}'";
-        }))}";
+            return $" WHERE {string.Join(" OR ", _options.AppLimits.Keys.Select(k =>
+            {
+                if (k.Contains("*"))
+                    return $"ProcessName like '{k.Replace("*", "%")}'";
+
+                return $"ProcessName = '{k}'";
+            }))}";
+        }
 
         public void Stop()
         {
@@ -90,16 +96,9 @@ namespace ParentalControlPoc.Services
 
             SaveState();
 
-
             // Calculate total time
             var processes = Processes.ToDictionary(p => p.Key, p => p.Value.SpentToday);
-            _logger.LogInformation("Spent today: {Processes}", JsonSerializer.Serialize(processes,
-                new JsonSerializerOptions
-                {
-                    WriteIndented = true,
-                    Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping
-                })
-            );
+            _logger.LogInformation("Spent today: {Processes}", JsonSerializer.Serialize(processes, _writeSerializerOptions));
         }
 
         private ConcurrentDictionary<string, ProcessData> LoadState()
@@ -120,6 +119,24 @@ namespace ParentalControlPoc.Services
                     loggedProcesses.TryRemove(process, out _);
 
             Process[] processList = Process.GetProcesses();
+            if (_options.LogAllProcesses)
+                _logger.LogInformation("Running processes: {Processes}",
+                    JsonSerializer.Serialize(processList
+                    .Where(p =>
+                    {
+                        try
+                        {
+                            return p.ProcessName != "Idle" && p.StartTime > DateTime.MinValue;
+                        }
+                        catch
+                        {
+                            return false;
+                        }
+                    })
+                    .Select(p => new { p.ProcessName, p.Id, p.StartTime })
+                    , _writeSerializerOptions)
+                );
+
             var runningProcesses = processList
                 .Select(p => new KeyValuePair<string?, Process>(_options.FindProcessName($"{p.ProcessName}.exe"), p))
                 .Where(kvp => kvp.Key != null)
@@ -149,23 +166,40 @@ namespace ParentalControlPoc.Services
 
         private void SaveState()
         {
-            foreach (var process in Processes.Values)
-                process.LastUpdated = DateTime.Now;
-
-            if (!Directory.Exists(Path.GetDirectoryName(_options.StateFile)))
-                Directory.CreateDirectory(Path.GetDirectoryName(_options.StateFile)!);
-
-            using var file = File.Create(_options.StateFile);
-            JsonSerializer.Serialize(file, Processes, new JsonSerializerOptions
+            if (Monitor.TryEnter(_saveStateLock))
             {
-                WriteIndented = true,
-                Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping
-            });
+                try
+                {
+                    foreach (var process in Processes.Values)
+                        process.LastUpdated = DateTime.Now;
+
+                    if (!Directory.Exists(Path.GetDirectoryName(_options.StateFile)))
+                        Directory.CreateDirectory(Path.GetDirectoryName(_options.StateFile)!);
+
+                    using var file = File.Create(_options.StateFile);
+                    JsonSerializer.Serialize(file, Processes, new JsonSerializerOptions
+                    {
+                        WriteIndented = true,
+                        Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping
+                    });
+                }
+                finally
+                {
+                    Monitor.Exit(_saveStateLock);
+                }
+            }
         }
 
         private void ProcessStarted(object sender, EventArrivedEventArgs e)
         {
             var eventProcessName = (string)e.NewEvent.Properties["ProcessName"].Value;
+            if (_options.LogAllProcesses)
+                _logger.LogInformation(
+                    "Process Started: {Process}",
+                    JsonSerializer.Serialize(e.NewEvent.Properties.Cast<PropertyData>().ToDictionary(pd => pd.Name, pd => pd.Value),
+                    _writeSerializerOptions
+                ));
+
             var processName = _options.FindProcessName(eventProcessName);
             if (processName == null)
             {
@@ -194,8 +228,15 @@ namespace ParentalControlPoc.Services
         private void ProcessStopped(object sender, EventArrivedEventArgs e)
         {
             var eventProcessName = (string)e.NewEvent.Properties["ProcessName"].Value;
+            if (_options.LogAllProcesses)
+                _logger.LogInformation(
+                    "Process Stopped: {Process}",
+                    JsonSerializer.Serialize(e.NewEvent.Properties.Cast<PropertyData>().ToDictionary(pd => pd.Name, pd => pd.Value),
+                    _writeSerializerOptions
+                ));
+
             var processName = _options.FindProcessName(eventProcessName);
-            if(processName == null)
+            if (processName == null)
             {
                 _logger.LogError($"Could not find process {eventProcessName}");
                 return;

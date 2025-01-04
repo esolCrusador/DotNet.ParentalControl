@@ -1,6 +1,6 @@
 ﻿using System.Reactive.Linq;
 
-namespace Wisk.ParentalControl.Models
+namespace DotNet.ParentalControl.Models
 {
     class DaySessions
     {
