@@ -29,7 +29,7 @@ namespace DotNet.ParentalControl.Configuration
             InitializeConfiguration(options.Value);
             _changeTracker = optionsMonitor.OnChange(changedOptions =>
             {
-                InitializeConfiguration(options.Value);
+                InitializeConfiguration(changedOptions);
                 _changed?.OnNext(Unit.Default);
             });
             _changed = new Subject<Unit>();

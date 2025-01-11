@@ -2,6 +2,7 @@ using DotNet.ParentalControl.Configuration;
 using DotNet.ParentalControl.Extensions;
 using DotNet.ParentalControl.Services;
 using Microsoft.Extensions.Logging.EventLog;
+using Microsoft.Extensions.Options;
 using Serilog;
 using System.Text.Encodings.Web;
 using System.Text.Json;
@@ -37,7 +38,7 @@ namespace DotNet.ParentalControl
                 services.AddHostedService<Worker>();
 
                 services.AddOptions<MonitorOptions>();
-                services.Configure<MonitorOptions>(ctx.Configuration.GetSection("Monitor"), opt => opt.ErrorOnUnknownConfiguration = true);
+                services.Configure<MonitorOptions>(ctx.Configuration.GetSection(MonitorOptions.SectionName), opt => opt.ErrorOnUnknownConfiguration = true);
 
                 services.AddSingleton(new JsonSerializerOptions
                 {

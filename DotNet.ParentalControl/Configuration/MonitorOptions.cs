@@ -2,6 +2,8 @@
 {
     public class MonitorOptions
     {
+        public const string SectionName = "Monitor";
+
         public bool LogAllProcesses { get; set; }
         public string StateFile { get; set; } = "State.json";
         public TimeSpan ActivityCheckPeriod { get; set; } = TimeSpan.FromSeconds(20);

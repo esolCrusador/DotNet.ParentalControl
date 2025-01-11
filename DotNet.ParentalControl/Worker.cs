@@ -1,5 +1,6 @@
 using DotNet.ParentalControl.Configuration;
 using DotNet.ParentalControl.Services;
+using System.Reactive.Linq;
 
 namespace DotNet.ParentalControl
 {
@@ -19,29 +20,39 @@ namespace DotNet.ParentalControl
             _logger = logger;
         }
 
-        public Task StartAsync(CancellationToken cancellationToken)
+        public async Task StartAsync(CancellationToken cancellationToken)
+        {
+            await Start(cancellationToken);
+
+            _refreshConfiguration = _monitorConfiguration.Changed.Select(_ =>
+            Observable.FromAsync(async cancellation =>
+                {
+                    await Stop(cancellation);
+                    await Start(cancellation);
+
+                    _logger.LogInformation("Configuration reloaded");
+                })
+            ).Concat().Subscribe();
+        }
+
+        public async Task StopAsync(CancellationToken cancellationToken)
+        {
+            await Stop(cancellationToken);
+            _refreshConfiguration?.Dispose();
+        }
+
+        private Task Start(CancellationToken cancellationToken)
         {
             _activityMonitor.Start();
             _activityLimiter.Start();
-            _refreshConfiguration = _monitorConfiguration.Changed.Subscribe(_ =>
-            {
-                _activityMonitor.Stop();
-                _activityLimiter.Stop();
-
-                _activityMonitor.Start();
-                _activityLimiter.Start();
-
-                _logger.LogInformation("Configuration reloaded");
-            });
 
             return Task.CompletedTask;
         }
 
-        public Task StopAsync(CancellationToken cancellationToken)
+        private Task Stop(CancellationToken cancellationToken)
         {
             _activityMonitor.Stop();
             _activityLimiter.Stop();
-            _refreshConfiguration?.Dispose();
 
             return Task.CompletedTask;
         }
