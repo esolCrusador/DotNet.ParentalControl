@@ -34,7 +34,12 @@ namespace DotNet.ParentalControl.Services
         private void HandleActivity(ProcessActivityNotification processActivity)
         {
             if (!processActivity.IsActive)
+            { 
+               if( _current.TryGetValue(processActivity.ProcessName, out var previous))
+                    previous.IsActive = false;
+                
                 return;
+            }
 
             var processName = processActivity.ProcessName;
             var appLimits = _configuration.Processes.GetValueOrDefault(processName)?.Limits;
@@ -60,7 +65,7 @@ namespace DotNet.ParentalControl.Services
             }
 
             var timeLeftToday = dayLimit - spentToday;
-            if (!_current.TryGetValue(processName, out var previousActivity))
+            if (!_current.TryGetValue(processName, out var previousActivity) || processActivity.IsActive && !previousActivity.IsActive)
                 Task.Run(() => MessageBox.Show(GetTimeReminder(appLimits, timeLeftToday, leftForBreak, processName)));
             else
             {
@@ -77,7 +82,12 @@ namespace DotNet.ParentalControl.Services
                 }
             }
 
-            _current[processActivity.ProcessName] = new Timings { LeftToday = timeLeftToday, LeftBeforeBreak = leftForBreak };
+            _current[processActivity.ProcessName] = new Timings
+            {
+                LeftToday = timeLeftToday,
+                LeftBeforeBreak = leftForBreak,
+                IsActive = processActivity.IsActive
+            };
         }
         private string GetTimeReminder(LimitsConfiguration appLimits, TimeSpan? timeLeftToday, TimeSpan? leftForBreak, string processName)
         {
@@ -135,6 +145,7 @@ namespace DotNet.ParentalControl.Services
         {
             public required TimeSpan? LeftToday { get; set; }
             public required TimeSpan? LeftBeforeBreak { get; set; }
+            public required bool IsActive { get; set; }
         }
     }
 }

@@ -1,12 +1,26 @@
 ﻿using DotNet.ParentalControl.Extensions;
 using System.Collections.Concurrent;
+using System.Linq;
 using System.Reactive.Linq;
 
 namespace DotNet.ParentalControl.Models
 {
     public class ProcessData
     {
-        public Dictionary<DateTime, DaySessions> Sessions { get; set; } = [];
+        private DateTime? _oldestSession;
+        public ConcurrentDictionary<DateTime, DaySessions> Sessions { get; set; } = [];
+        public DateTime? OldestSession
+        {
+            get
+            {
+                if (_oldestSession == null && Sessions.Count > 0)
+                    _oldestSession = Sessions.Keys.Min();
+
+                return _oldestSession;
+            }
+
+            set => _oldestSession = value;
+        }
         public ConcurrentDictionary<int, DateTime> StartedProcesses { get; set; } = [];
         public DateTime LastUpdated { get; set; } = DateTime.Now;
         public TimeSpan SpentForPeriod(DateTime from, DateTime? to = default)
@@ -60,10 +74,10 @@ namespace DotNet.ParentalControl.Models
 
         public ProcessData(ProcessData processData)
         {
-            Sessions = processData.Sessions.ToDictionary(
+            Sessions = new ConcurrentDictionary<DateTime, DaySessions>(processData.Sessions.ToDictionary(
                 kvp => kvp.Key,
                 kvp => new DaySessions { Sessions = kvp.Value.Sessions.Select(dr => new DateRange(dr)).ToList() }
-                );
+            ));
             StartedProcesses = new ConcurrentDictionary<int, DateTime>(processData.StartedProcesses);
             LastUpdated = processData.LastUpdated;
         }

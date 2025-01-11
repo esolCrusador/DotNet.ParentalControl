@@ -1,33 +1,59 @@
-﻿using Microsoft.Extensions.FileSystemGlobbing;
+﻿using DotNet.ParentalControl.Extensions;
 using Microsoft.Extensions.Options;
+using System.Diagnostics.CodeAnalysis;
+using System.Reactive;
+using System.Reactive.Linq;
+using System.Reactive.Subjects;
 using System.Text.RegularExpressions;
-using static System.Windows.Forms.Design.AxImporter;
 
 namespace DotNet.ParentalControl.Configuration
 {
-    public class MonitorConfiguration
+    public class MonitorConfiguration : IDisposable
     {
-        private static readonly Regex SpecialPath = new Regex("\\%(?<name>[^\\%]+)\\%\\\\", RegexOptions.Compiled);
+        private readonly IDisposable? _changeTracker;
+        private readonly Subject<Unit> _changed;
 
-        public TimeSpan ActivityCheckPeriod { get; }
-        public TimeSpan StateSavePeriod { get; }
-        public bool LogAllProcesses { get; }
-        public string StateFile { get; }
-        public TimeSpan[] NotificationIntervals { get; }
+        public TimeSpan ActivityCheckPeriod { get; private set; }
+        public TimeSpan StateSavePeriod { get; private set; }
+        public bool LogAllProcesses { get; private set; }
+        public string StateFile { get; private set; }
+        public TimeSpan[] NotificationIntervals { get; private set; }
+        public TimeSpan KeepSessionsHistory { get; set; }
 
-        public Dictionary<string, ProcessMonitor> Processes { get; }
-        public Func<string, string?> GetProcessName { get; }
+        public Dictionary<string, ProcessMonitor> Processes { get; private set; }
+        public Func<string, string?> GetProcessName { get; private set; }
+        public IObservable<Unit> Changed { get; }
 
-        public MonitorConfiguration(IOptions<MonitorOptions> options)
+        public MonitorConfiguration(IOptions<MonitorOptions> options, IOptionsMonitor<MonitorOptions> optionsMonitor)
         {
-            ActivityCheckPeriod = options.Value.ActivityCheckPeriod;
-            StateSavePeriod = options.Value.StateSavePeriod;
-            LogAllProcesses = options.Value.LogAllProcesses;
-            StateFile = GetStateFile(options.Value);
-            NotificationIntervals = options.Value.NotificationIntervals;
+            InitializeConfiguration(options.Value);
+            _changeTracker = optionsMonitor.OnChange(changedOptions =>
+            {
+                InitializeConfiguration(options.Value);
+                _changed?.OnNext(Unit.Default);
+            });
+            _changed = new Subject<Unit>();
+            Changed = _changed.AsObservable();
+        }
 
-            Processes = GetProcessLimits(options.Value);
+        [MemberNotNull(nameof(StateFile), nameof(NotificationIntervals), nameof(Processes), nameof(GetProcessName))]
+        private void InitializeConfiguration(MonitorOptions options)
+        {
+            ActivityCheckPeriod = options.ActivityCheckPeriod;
+            StateSavePeriod = options.StateSavePeriod;
+            LogAllProcesses = options.LogAllProcesses;
+            StateFile = DirectoryExtensions.ResolveSpecialFolders(options.StateFile);
+            NotificationIntervals = options.NotificationIntervals;
+            KeepSessionsHistory = options.KeepSessionsHistory;
+
+            Processes = GetProcessLimits(options);
             GetProcessName = CreateGetProcessName(Processes);
+        }
+
+        public void Dispose()
+        {
+            _changeTracker?.Dispose();
+            _changed.OnCompleted();
         }
 
         public string? FindProcessName(string processName)
@@ -36,24 +62,6 @@ namespace DotNet.ParentalControl.Configuration
                 return processName;
 
             return GetProcessName(processName);
-        }
-
-        private static string GetStateFile(MonitorOptions options)
-        {
-            var path = options.StateFile;
-            var specialPath = SpecialPath.Match(path);
-            if (specialPath.Success)
-            {
-                var specialFolder = specialPath.Groups["name"].Value switch
-                {
-                    "LOCALAPPDATA" => Environment.SpecialFolder.LocalApplicationData,
-                    _ => throw new NotSupportedException($"Not supported %{specialPath}%")
-                };
-
-                return Environment.GetFolderPath(specialFolder) + "\\" + path.Substring(specialPath.Length);
-            }
-            else
-                return path;
         }
 
         private static Dictionary<string, ProcessMonitor> GetProcessLimits(MonitorOptions options)

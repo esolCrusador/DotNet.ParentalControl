@@ -1,4 +1,5 @@
 using DotNet.ParentalControl.Configuration;
+using DotNet.ParentalControl.Extensions;
 using DotNet.ParentalControl.Services;
 using Microsoft.Extensions.Logging.EventLog;
 using Serilog;
@@ -12,7 +13,16 @@ namespace DotNet.ParentalControl
         public static void Main(string[] args)
         {
             var builder = Host.CreateDefaultBuilder(args).UseWindowsService();
-            builder.ConfigureServices((ctx, services) =>
+            builder.ConfigureAppConfiguration(configurationBuilder =>
+            {
+                var sources = configurationBuilder.Sources;
+
+                var configurationSources = new List<string>();
+                configurationBuilder.Build().GetSection("ConfigurationSources").Bind(configurationSources);
+                if (configurationSources != null)
+                    foreach (var configurationSource in configurationSources)
+                        configurationBuilder.AddJsonFile(DirectoryExtensions.ResolveSpecialFolders(configurationSource), true, true);
+            }).ConfigureServices((ctx, services) =>
             {
                 services.AddLogging(lb =>
                 {
@@ -25,10 +35,10 @@ namespace DotNet.ParentalControl
                     lb.AddSerilog(new LoggerConfiguration().ReadFrom.Configuration(ctx.Configuration).CreateLogger(), true);
                 });
                 services.AddHostedService<Worker>();
-                services.Configure<MonitorOptions>(option =>
-                {
-                    ctx.Configuration.GetSection("Monitor").Bind(option, b => b.ErrorOnUnknownConfiguration = true);
-                });
+
+                services.AddOptions<MonitorOptions>();
+                services.Configure<MonitorOptions>(ctx.Configuration.GetSection("Monitor"), opt => opt.ErrorOnUnknownConfiguration = true);
+
                 services.AddSingleton(new JsonSerializerOptions
                 {
                     WriteIndented = true,

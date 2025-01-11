@@ -8,5 +8,6 @@
         public TimeSpan StateSavePeriod { get; set; } = TimeSpan.FromMinutes(1);
         public Dictionary<string, AppMonitor> Applications { get; set; } = new Dictionary<string, AppMonitor>();
         public TimeSpan[] NotificationIntervals = [TimeSpan.FromMinutes(1), TimeSpan.FromMinutes(5), TimeSpan.FromMinutes(30), TimeSpan.FromHours(1)];
+        public TimeSpan KeepSessionsHistory { get; set; } = TimeSpan.FromDays(7);
     }
 }

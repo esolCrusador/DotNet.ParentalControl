@@ -152,7 +152,7 @@ namespace DotNet.ParentalControl.Services
                     foreach (var p in pd.StartedProcesses.Where(sp => runningProcess?.ContainsKey(sp.Key) != true))
                     {
                         if (!pd.Sessions.TryGetValue(pd.LastUpdated.Date, out var daySesions))
-                            pd.Sessions.Add(pd.LastUpdated.Date, daySesions = new DaySessions());
+                            pd.Sessions.TryAdd(pd.LastUpdated.Date, daySesions = new DaySessions());
 
                         daySesions.Sessions.Add(new DateRange { Start = p.Value, End = pd.LastUpdated });
                     }
@@ -171,7 +171,18 @@ namespace DotNet.ParentalControl.Services
                 try
                 {
                     foreach (var process in Processes.Values)
+                    {
+                        if ((DateTime.Now - process.OldestSession) > _configuration.KeepSessionsHistory)
+                        {
+                            var oldDays = process.Sessions.Keys.Where(k => (DateTime.Now - k) > _configuration.KeepSessionsHistory).ToList();
+                            foreach (var day in oldDays)
+                                process.Sessions.TryRemove(day, out _);
+
+                            process.OldestSession = null;
+                        }
+
                         process.LastUpdated = DateTime.Now;
+                    }
 
                     if (!Directory.Exists(Path.GetDirectoryName(_configuration.StateFile)))
                         Directory.CreateDirectory(Path.GetDirectoryName(_configuration.StateFile)!);
@@ -253,7 +264,7 @@ namespace DotNet.ParentalControl.Services
                 process.StartedProcesses.TryRemove(processId, out _);
 
                 if (!process.Sessions.TryGetValue(DateTime.Today, out var todaySessions))
-                    process.Sessions.Add(DateTime.Today, todaySessions = new());
+                    process.Sessions.TryAdd(DateTime.Today, todaySessions = new());
 
                 todaySessions.Sessions.Add(new DateRange { Start = startTime, End = stopTime });
                 process.LastUpdated = DateTime.Now;
